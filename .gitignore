@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Build artifacts
+dist/
+build/
+*.skill
+
+# Dev-only, machine-specific Office-generated fixtures (carry local user names/GUIDs)
+dev/fixtures/
+
+# Scratch sample outputs
+*.sample.docx
+*.sample.xlsx
+*.sample.pptx

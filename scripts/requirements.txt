@@ -1,0 +1,8 @@
+# office-comments runtime dependency
+lxml>=4.9
+
+# Used ONLY by the test suite for round-trip "does Office's own parser still open it?"
+# checks — the engine itself never imports these (it speaks raw XML).
+python-docx>=1.1
+openpyxl>=3.1
+python-pptx>=1.0
