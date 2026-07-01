@@ -84,8 +84,13 @@ def main() -> int:
         for frag in ("relationships/threadedComment", "relationships/comments", "relationships/vmlDrawing"):
             if frag not in srels:
                 fails.append(f"add: sheet rel missing {frag}")
-        if "legacyDrawing" not in z.read("xl/worksheets/sheet1.xml").decode():
+        sheet_xml = z.read("xl/worksheets/sheet1.xml").decode()
+        if "legacyDrawing" not in sheet_xml:
             fails.append("add: legacyDrawing not added to sheet")
+        if "r:id=" not in sheet_xml:
+            fails.append("add: legacyDrawing missing r:id (relationships prefix)")
+        if "ns0:id=" in sheet_xml:
+            fails.append("add: legacyDrawing serialised with ns0:id instead of r:id (#1 regression)")
     if (o := _opens(f)) is not True:
         fails.append(f"add: won't open: {o}")
     changed = sorted(n for n in before if before[n] != _parts(f).get(n))

@@ -53,6 +53,7 @@ def main(path: str) -> int:
 
         if path.lower().endswith(".docx"):
             _docx_anchor_region(z)
+            _docx_revision_region(z)
         elif path.lower().endswith(".pptx"):
             _list_slide_extlst(z)
     return 0
@@ -73,6 +74,30 @@ def _docx_anchor_region(z):
         if any(_localname(c) in markers for c in p.iter()) and id(p) not in seen:
             seen.add(id(p))
             print(etree.tostring(p, pretty_print=True, encoding="unicode"))
+
+
+def _docx_revision_region(z):
+    """Print the trackRevisions switch + each document.xml block that carries revision markup."""
+    print("\n-- tracked changes --")
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    try:
+        st = etree.fromstring(z.read("word/settings.xml"))
+        print("   settings trackRevisions:",
+              "on" if st.find(f"{{{W}}}trackRevisions") is not None else "off")
+    except KeyError:
+        print("   (no settings.xml)")
+    revtags = {"ins", "del", "rPrChange", "pPrChange", "tblPrChange", "tblGridChange",
+               "tblPrExChange", "tcPrChange", "trPrChange", "moveFrom", "moveTo",
+               "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+               "cellIns", "cellDel", "cellMerge", "numberingChange", "delText", "delInstrText"}
+    body = etree.fromstring(z.read("word/document.xml")).find(f"{{{W}}}body")
+    shown = 0
+    for child in (list(body) if body is not None else []):
+        if any(_localname(e) in revtags for e in child.iter()):
+            print(etree.tostring(child, pretty_print=True, encoding="unicode"))
+            shown += 1
+    if not shown:
+        print("   (no tracked changes)")
 
 
 def _list_slide_extlst(z):

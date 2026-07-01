@@ -1,4 +1,4 @@
-# office-comments runtime dependency
+# office-markup runtime dependency
 lxml>=4.9
 
 # Used ONLY by the test suite for round-trip "does Office's own parser still open it?"

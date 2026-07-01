@@ -12,9 +12,10 @@ from pathlib import Path
 import _docx_comments
 import _xlsx_comments
 import _pptx_comments
+import _docx_revisions
 from _errors import (CommentError, UnsupportedFile, AnchorNotFound, AmbiguousAnchor,
-                     CommentNotFound, EXIT_OK, EXIT_GENERIC, EXIT_BAD_FILE, EXIT_ANCHOR,
-                     EXIT_AMBIGUOUS, EXIT_NO_COMMENT)
+                     CommentNotFound, RevisionNotFound, EXIT_OK, EXIT_GENERIC, EXIT_BAD_FILE,
+                     EXIT_ANCHOR, EXIT_AMBIGUOUS, EXIT_NO_COMMENT, EXIT_NO_REVISION)
 
 EXIT_OK = EXIT_OK  # re-export for the scripts
 
@@ -31,6 +32,18 @@ def module_for(path):
     return mod
 
 
+def docx_only(path):
+    """Return the tracked-changes module for a .docx, or a clear error otherwise. Tracked changes
+    are a Word-only feature (Excel's revision system is deprecated; PowerPoint has none)."""
+    ext = Path(path).suffix.lower()
+    if ext != ".docx":
+        raise UnsupportedFile(f"tracked changes are a Word-only feature; {ext!r} is not supported "
+                              f"(Excel revisions are deprecated, PowerPoint has none)")
+    if not Path(path).exists():
+        raise UnsupportedFile(f"file not found: {path}")
+    return _docx_revisions
+
+
 def run(fn) -> int:
     """Execute fn(); translate expected errors into stable exit codes."""
     try:
@@ -41,6 +54,9 @@ def run(fn) -> int:
     except AnchorNotFound as e:
         print(f"error: anchor not found - {e}", file=sys.stderr)
         return EXIT_ANCHOR
+    except RevisionNotFound as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_NO_REVISION
     except CommentNotFound as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_NO_COMMENT
@@ -77,3 +93,19 @@ def print_human(records) -> None:
             if r["is_reply"]:
                 print(f"       reply [{r['id']}] {r['author']}: {r['text']}")
         print()
+
+
+def print_revisions(records) -> None:
+    if not records:
+        print("(no tracked changes)")
+        return
+    for r in records:
+        who = r.get("author") or "?"
+        loc = r.get("location") or ""
+        head = f"[{r['id']}] {r['type']}  by {who}"
+        if loc:
+            head += f"  ({loc})"
+        print(head)
+        text = (r.get("text") or "").replace("\n", " ")
+        if text:
+            print(f"     {text[:70]!r}" + ("..." if len(text) > 70 else ""))

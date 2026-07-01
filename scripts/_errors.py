@@ -1,4 +1,4 @@
-"""Shared error types + stable CLI exit codes for the office-comments skill."""
+"""Shared error types + stable CLI exit codes for the office-markup skill."""
 from __future__ import annotations
 
 
@@ -22,6 +22,10 @@ class CommentNotFound(CommentError):
     """No comment with the given id exists in the file."""
 
 
+class RevisionNotFound(CommentError):
+    """No tracked change with the given id exists in the file."""
+
+
 # Stable exit codes used by all CLIs (mirrors the oml-docs convention).
 EXIT_OK = 0
 EXIT_GENERIC = 1
@@ -29,3 +33,4 @@ EXIT_BAD_FILE = 3      # not an Office file we support / corrupted
 EXIT_ANCHOR = 4        # anchor not found
 EXIT_AMBIGUOUS = 5     # anchor matched in multiple places
 EXIT_NO_COMMENT = 6    # referenced comment id is missing
+EXIT_NO_REVISION = 7   # referenced tracked-change id is missing

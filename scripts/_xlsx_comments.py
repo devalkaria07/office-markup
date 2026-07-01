@@ -293,14 +293,14 @@ def _check_legacy_clobber(ps, comments_part, vml_part):
     if raw_c:
         for a in etree.fromstring(raw_c).iter(f"{{{X}}}author"):
             if not (a.text or "").startswith("tc="):
-                raise CommentError("this sheet has classic (non-threaded) comments; office-comments "
+                raise CommentError("this sheet has classic (non-threaded) comments; office-markup "
                                    "does not modify sheets that mix classic and threaded comments")
     raw_v = ps.get_bytes(vml_part)
     if raw_v:
         text = raw_v.decode("utf-8", "ignore")
         if len(re.findall(r"<v:shape\b", text)) > text.count('ObjectType="Note"'):
             raise CommentError("this sheet has non-comment drawings (e.g. form controls) in its "
-                               "legacy VML; office-comments won't risk overwriting them")
+                               "legacy VML; office-markup won't risk overwriting them")
 
 
 def _remove_legacy_shadow(ps, sheet_part, comments_part, vml_part):
@@ -363,7 +363,7 @@ def _rebuild_legacy(ps, sheet_part, troot):
     sheet_root = ps.get_xml(sheet_part)
     ld = sheet_root.find(f"{{{X}}}legacyDrawing")
     if ld is None:
-        ld = etree.Element(f"{{{X}}}legacyDrawing")
+        ld = etree.Element(f"{{{X}}}legacyDrawing", nsmap={"r": R})   # bind r: so r:id (not ns0:id) serialises
         nxt = next((sheet_root.find(f"{{{X}}}{tag}") for tag in ("tableParts", "extLst")
                     if sheet_root.find(f"{{{X}}}{tag}") is not None), None)
         (nxt.addprevious if nxt is not None else sheet_root.append)(ld)

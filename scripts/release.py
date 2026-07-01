@@ -1,7 +1,7 @@
-"""Release tooling for the office-comments skill.
+"""Release tooling for the office-markup skill.
 
-A release is a tagged, packaged ``dist/office-comments-<version>.skill`` (a zip whose entries
-are prefixed with ``office-comments/`` — matching how the skill is installed).
+A release is a tagged, packaged ``dist/office-markup-<version>.skill`` (a zip whose entries
+are prefixed with ``office-markup/`` — matching how the skill is installed).
 
 Single source of truth for the version: ``SKILL.md`` frontmatter ``metadata.version``.
 ``scripts/_ooxml_zip.py`` ``__version__`` MUST match it; this script asserts that and refuses to
@@ -26,7 +26,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 SKILL_MD = SKILL_DIR / "SKILL.md"
 ENGINE_PY = SKILL_DIR / "scripts" / "_ooxml_zip.py"
 DIST_DIR = SKILL_DIR / "dist"
-PKG_PREFIX = "office-comments"
+PKG_PREFIX = "office-markup"
 
 # `dev/` holds Windows+Office-only fixture tooling and must never ship.
 _EXCLUDE_DIRS = {".git", "__pycache__", "dist", "build", ".pytest_cache", "dev"}
@@ -103,7 +103,7 @@ def _included(path: Path) -> bool:
 
 def package(version: str) -> Path:
     DIST_DIR.mkdir(exist_ok=True)
-    out = DIST_DIR / f"office-comments-{version}.skill"
+    out = DIST_DIR / f"office-markup-{version}.skill"
     n = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for path in sorted(SKILL_DIR.rglob("*")):

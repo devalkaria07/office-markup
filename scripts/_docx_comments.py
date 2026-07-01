@@ -17,27 +17,24 @@ thread's w15:done to "1".
 """
 from __future__ import annotations
 
-import copy
 import zipfile
 
 from lxml import etree
 
 from _ooxml_zip import patch_parts
-from _errors import AnchorNotFound, AmbiguousAnchor, CommentNotFound, CommentError
+from _errors import AnchorNotFound, CommentNotFound, CommentError
 from _util import hex8, initials as _initials_of, iso_z, local_z
+from _docx_anchor import W, _w, _set_preserve, _find_phrase, _isolate, _para_runs, _paragraphs
 
-# --- namespaces ---
-W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+# --- namespaces (W + XML + the anchor primitives are imported from _docx_anchor, shared with revisions) ---
 W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
 W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
 W16CID = "http://schemas.microsoft.com/office/word/2016/wordml/cid"
 W16CEX = "http://schemas.microsoft.com/office/word/2018/wordml/cex"
-XML = "http://www.w3.org/XML/1998/namespace"
 
 DOC = "word/document.xml"
 
 
-def _w(t):  return f"{{{W}}}{t}"
 def _w14(t): return f"{{{W14}}}{t}"
 def _w15(t): return f"{{{W15}}}{t}"
 def _wcid(t): return f"{{{W16CID}}}{t}"
@@ -192,10 +189,6 @@ def _ensure_part(ps, key):
     return root
 
 
-def _set_preserve(t):
-    t.set(f"{{{XML}}}space", "preserve")
-
-
 def _build_comment_el(cid, paraid, textid, author, initials, date_local, text):
     cm = etree.Element(_w("comment"))
     cm.set(_w("id"), str(cid))
@@ -263,88 +256,8 @@ def _ensure_person(people_root, author):
 # Anchoring in document.xml
 # ---------------------------------------------------------------------------
 
-def _para_runs(p):
-    return [(r, r.find(_w("t"))) for r in p.findall(_w("r")) if r.find(_w("t")) is not None]
-
-
-def _split_run(r, t, at):
-    """Split run `r` at local offset `at`: the left slice (text[:at]) becomes a NEW run carrying
-    only the run properties + that text, inserted before `r`; `r` keeps the right slice.
-
-    Building the left run from just rPr + a fresh w:t (rather than deep-copying the whole run)
-    avoids duplicating any non-text children the run may also hold — a `w:tab`, `w:br`, inline
-    `w:drawing`, footnote ref, etc. — which a naive deepcopy would clone into both halves."""
-    full = t.text or ""
-    left = etree.Element(_w("r"))
-    rpr = r.find(_w("rPr"))
-    if rpr is not None:
-        left.append(copy.deepcopy(rpr))
-    lt = etree.SubElement(left, _w("t"))
-    lt.text = full[:at]
-    _set_preserve(lt)
-    t.text = full[at:]
-    _set_preserve(t)
-    r.addprevious(left)
-
-
-def _isolate(p, start, end):
-    """Split runs so the [start, end) character span is covered by whole runs; return
-    (first_run, last_run) of that span."""
-    pos = 0
-    for r, t in _para_runs(p):
-        ln = len(t.text or "")
-        if pos <= start < pos + ln:
-            if start - pos > 0:
-                _split_run(r, t, start - pos)
-            break
-        pos += ln
-    pos = 0
-    for r, t in _para_runs(p):
-        ln = len(t.text or "")
-        if pos < end <= pos + ln:
-            if end - pos < ln:
-                _split_run(r, t, end - pos)
-            break
-        pos += ln
-    inside = []
-    pos = 0
-    for r, t in _para_runs(p):
-        ln = len(t.text or "")
-        if pos >= start and pos + ln <= end and ln:
-            inside.append(r)
-        pos += ln
-    if not inside:
-        raise AnchorNotFound("could not isolate the anchor text within the paragraph")
-    return inside[0], inside[-1]
-
-
-def _paragraphs(doc_root):
-    """All paragraphs in document order (including those inside tables / text boxes). Used by both
-    `list` (to report the paragraph index) and `add --paragraph N`, so the two refer to the same
-    enumeration and round-trip even when the document contains tables."""
-    body = doc_root.find(_w("body"))
-    return list(body.iter(_w("p"))) if body is not None else []
-
-
-def _find_phrase(doc_root, text, occurrence):
-    """Locate the anchor text. Returns (paragraph, start, end). `occurrence` is 1-based;
-    if None and the text matches more than once, raise AmbiguousAnchor."""
-    matches = []
-    for p in _paragraphs(doc_root):
-        whole = "".join(t.text or "" for _, t in _para_runs(p))
-        i = whole.find(text)
-        while i != -1:
-            matches.append((p, i, i + len(text)))
-            i = whole.find(text, i + 1)
-    if not matches:
-        raise AnchorNotFound(f"anchor text not found: {text!r}")
-    if occurrence is None:
-        if len(matches) > 1:
-            raise AmbiguousAnchor(f"{len(matches)} matches for {text!r}; pass an occurrence (1..{len(matches)})")
-        return matches[0]
-    if not (1 <= occurrence <= len(matches)):
-        raise AnchorNotFound(f"occurrence {occurrence} out of range (1..{len(matches)}) for {text!r}")
-    return matches[occurrence - 1]
+# _para_runs / _split_run / _isolate / _paragraphs / _find_phrase now live in _docx_anchor
+# (shared with _docx_revisions) and are imported at the top of this module.
 
 
 def _anchor_top_level(doc_root, anchor, cid):

@@ -1,4 +1,4 @@
-"""Binary-safe OOXML zip surgery — the shared engine for the office-comments skill.
+"""Binary-safe OOXML zip surgery — the shared engine for the office-markup skill.
 
 An Office file (.docx / .xlsx / .pptx) is really a ZIP archive of XML "parts". To add
 or change a comment we want to touch ONLY the comment-related parts and copy every
@@ -41,7 +41,7 @@ from lxml import etree
 
 # Single source of truth for the skill version. SKILL.md `metadata.version` MUST match
 # this; scripts/release.py asserts the two are in sync (see RELEASING.md).
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # OPC packaging namespaces — the "table of contents" and the cross-reference parts that
 # every .docx/.xlsx/.pptx shares, regardless of which Office app produced it.

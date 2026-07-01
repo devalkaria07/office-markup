@@ -2,7 +2,7 @@
 dev-only, not shipped). Inspect the output with dev/inspect_fixture.py to learn the exact
 parts/attributes/strings each per-format module must reproduce.
 
-    python dev/make_fixtures.py [word|excel|powerpoint|all]   (default: word)
+    python dev/make_fixtures.py [word|excel|powerpoint|word-revisions|all]   (default: word)
 
 Notes:
 - Uses DispatchEx -> a private, hidden Office instance, so it won't touch anything you
@@ -56,6 +56,77 @@ def word_fixtures(outdir=FIXTURES):
             pass
         made.append(_save_word(doc, os.path.join(outdir, "word_reply.docx")))
         doc.Close(False)
+    finally:
+        app.Quit()
+    return made
+
+
+def word_revision_fixtures(outdir=FIXTURES):
+    """Drive real Word with Track Changes ON to emit one fixture per revision type — the ground
+    truth _docx_revisions.py is built against. Inspect with dev/inspect_fixture.py."""
+    import win32com.client as win32
+    os.makedirs(outdir, exist_ok=True)
+    app = win32.DispatchEx("Word.Application")
+    app.Visible = False
+    try:
+        app.DisplayAlerts = 0
+    except Exception:
+        pass
+    made = []
+
+    def base(text="The quarterly revenue figures need careful review today."):
+        doc = app.Documents.Add()
+        doc.Content.InsertAfter(text)
+        doc.TrackRevisions = True
+        return doc
+
+    def out(doc, name):
+        p = _save_word(doc, os.path.join(outdir, name))
+        doc.Close(False)
+        made.append(p)
+
+    try:
+        d = base(); d.Range(0, 0).InsertAfter("URGENT "); out(d, "rev_insert.docx")
+        d = base(); d.Range(0, 4).Delete(); out(d, "rev_delete.docx")
+        d = base(); d.Range(4, 13).Font.Bold = True; out(d, "rev_rprchange.docx")
+        d = base(); d.Paragraphs(1).Alignment = 1; out(d, "rev_pprchange.docx")
+        d = base(); d.Range(20, 20).InsertParagraph(); out(d, "rev_ins_paramark.docx")
+
+        d = app.Documents.Add()
+        d.Content.InsertAfter("First paragraph here.\rSecond paragraph here.")
+        d.TrackRevisions = True
+        end1 = d.Paragraphs(1).Range.End
+        d.Range(end1 - 1, end1).Delete()
+        out(d, "rev_del_paramark.docx")
+
+        d = app.Documents.Add(); tbl = d.Tables.Add(d.Range(0, 0), 2, 2)
+        d.TrackRevisions = True; tbl.Rows.Add(); out(d, "rev_row_ins.docx")
+        d = app.Documents.Add(); tbl = d.Tables.Add(d.Range(0, 0), 3, 2)
+        d.TrackRevisions = True; tbl.Rows(2).Delete(); out(d, "rev_row_del.docx")
+
+        d = base(); d.Paragraphs(1).Range.ListFormat.ApplyNumberDefault(); out(d, "rev_numbering.docx")
+
+        d = app.Documents.Add()
+        d.Content.InsertAfter("ALPHA one. BETA two. GAMMA three.")
+        d.TrackRevisions = True
+        d.Range(0, 10).Cut()
+        d.Range(d.Content.End - 1, d.Content.End - 1).Paste()
+        out(d, "rev_move.docx")
+
+        d = app.Documents.Add()
+        d.Fields.Add(d.Range(0, 0), -1, 'DATE \\@ "yyyy"', False)
+        d.TrackRevisions = True
+        d.Range(0, d.Content.End - 1).Delete()
+        out(d, "rev_field_del.docx")
+
+        d = app.Documents.Add()
+        om = d.Range(0, 0).OMaths.Add(d.Range(0, 0))
+        d.OMaths(1).Range.Text = "a+b"
+        d.OMaths(1).BuildUp()
+        d.TrackRevisions = True
+        r = d.OMaths(1).Range
+        d.Range(r.Start, r.Start + 1).Delete()
+        out(d, "rev_math.docx")
     finally:
         app.Quit()
     return made
@@ -123,7 +194,8 @@ def powerpoint_fixtures(outdir=FIXTURES):
 
 def main(argv):
     which = (argv[0] if argv else "word").lower()
-    jobs = {"word": word_fixtures, "excel": excel_fixtures, "powerpoint": powerpoint_fixtures}
+    jobs = {"word": word_fixtures, "excel": excel_fixtures, "powerpoint": powerpoint_fixtures,
+            "word-revisions": word_revision_fixtures}
     if which == "all":
         targets = list(jobs)
     elif which in jobs:

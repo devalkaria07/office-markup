@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-07-01
+
+### Added
+- **Word tracked changes (revisions / redlines).** List every tracked change; accept or reject one
+  or all (optionally filtered by author); turn Track Changes on/off; and author tracked insertions
+  and deletions. Word (`.docx`) only — Excel's revision system is deprecated and PowerPoint has none.
+  Six new CLIs: `list_revisions`, `accept_change`, `reject_change`, `track_changes`, `insert_text`,
+  `delete_text`.
+- Every revision type Word produces is handled fully for **both accept and reject** — insertions,
+  deletions (including deleted fields), run / paragraph / table-property changes, inserted and
+  deleted paragraph marks, tracked table rows and cells, cell merges, moves, tracked equations, and
+  legacy numbering changes. Each type's accept/reject was verified to match Microsoft Word's own
+  Accept/Reject on a real-Word round-trip.
+- Shared Word anchoring primitives extracted to `scripts/_docx_anchor.py`, used by both the comment
+  and tracked-change modules.
+
+### Changed
+- **Renamed `office-comments` → `office-markup`** to reflect the broader scope (comments *and*
+  tracked changes). The GitHub repository was renamed to match; the old URL redirects.
+
+### Fixed
+- **Excel**: the `<legacyDrawing>` relationship id now serialises as `r:id` instead of `ns0:id`,
+  which some Excel builds could mishandle. Guarded by a smoke-test assertion. (#1)
+
 ## [0.1.0] - 2026-06-27
 
 ### Added
