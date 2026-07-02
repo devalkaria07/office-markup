@@ -14,7 +14,7 @@ description: |
   Word/Excel/PowerPoint or .docx/.xlsx/.pptx. Do NOT use for legacy single-note comments only,
   plain non-Office files, PDF, or Google Docs.
 metadata:
-  version: 0.2.0
+  version: 0.2.1
   author: Deval Karia
 ---
 
@@ -133,7 +133,7 @@ stays in the file as a redline until accepted. Both turn Track Changes on automa
   the current user unless told otherwise.
 - Verify generated files in real desktop Office before shipping any change (see RELEASING.md).
 
-## 12. Known limitations (v0.2.0)
+## 12. Known limitations (v0.2.1)
 - **Excel comments**: one thread per cell (reply to extend it). The skill refuses, with a clear
   message, to touch a sheet that already holds *classic* (non-threaded) comments or non-comment
   form-control drawings, rather than risk overwriting them.

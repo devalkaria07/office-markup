@@ -47,13 +47,22 @@ _LEGACY_NOTE = ("[Threaded comment]\n\nYour version of Excel allows you to read 
                 "comment; however, any edits to it will get removed if the file is opened in a "
                 "newer version of Excel. Learn more: https://go.microsoft.com/fwlink/?linkid=870924")
 
-_VML_HEAD = ('<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
-             ' xmlns:x="urn:schemas-microsoft-com:office:excel">'
-             '<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="1"/></o:shapelayout>'
-             '<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" '
-             'path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/>'
-             '<v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>')
+_VML_OPEN = ('<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
+             ' xmlns:x="urn:schemas-microsoft-com:office:excel">')
+_VML_SHAPETYPE = ('<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" '
+                  'path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/>'
+                  '<v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>')
 _VML_TAIL = "</xml>"
+
+
+def _vml_document(shapes):
+    """Assemble the VML note drawing. <o:idmap> must declare every 1024-wide shape-id block the
+    notes actually span (ids start at _x0000_s1025), so a hardcoded data="1" only covers the first
+    1023 notes; compute the block list to stay valid for very large comment counts."""
+    blocks = sorted({(1025 + i) // 1024 for i in range(max(1, len(shapes)))})
+    idmap = ('<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" '
+             f'data="{",".join(map(str, blocks))}"/></o:shapelayout>')
+    return _VML_OPEN + idmap + _VML_SHAPETYPE + "".join(shapes) + _VML_TAIL
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +312,28 @@ def _check_legacy_clobber(ps, comments_part, vml_part):
                                "legacy VML; office-markup won't risk overwriting them")
 
 
+def _ensure_sheet_rel(ps, sheet_part, rel_type, target):
+    """Return the Id of the sheet's relationship of `rel_type`, REUSING an existing one whatever its
+    target spelling, and only adding `target` when none exists. Prevents a duplicate <Relationship>
+    (which makes Excel drop the comments) when a foreign tool wrote the rel with a different spelling
+    than our own `../...`."""
+    _, by_type = _rels_by_type(ps.get_bytes, sheet_part)
+    existing = by_type.get(rel_type)
+    if existing:
+        return existing[0][0]
+    return ps.rels_for(sheet_part).add_rel(rel_type, target)
+
+
+def _drop_sheet_rels(ps, sheet_part, rel_types):
+    """Remove all of the sheet's relationships of the given types, whatever their target spelling —
+    so a foreign `/xl/...`-spelled rel is unwired too, not left dangling to a dropped part."""
+    _, by_type = _rels_by_type(ps.get_bytes, sheet_part)
+    rels = ps.rels_for(sheet_part)
+    for rt in rel_types:
+        for _rid, tgt in by_type.get(rt, []):
+            rels.remove_by_target(tgt)
+
+
 def _remove_legacy_shadow(ps, sheet_part, comments_part, vml_part):
     """Tear the legacy shadow down when a sheet has no comments left: drop the comments + VML
     parts (and their content types), remove the <legacyDrawing>, and unwire the two rels."""
@@ -313,9 +344,7 @@ def _remove_legacy_shadow(ps, sheet_part, comments_part, vml_part):
     if ld is not None:
         sheet_root.remove(ld)
         ps.set_xml(sheet_part, sheet_root)
-    rels = ps.rels_for(sheet_part)
-    rels.remove_by_target("../" + comments_part[len("xl/"):])
-    rels.remove_by_target("../" + vml_part[len("xl/"):])
+    _drop_sheet_rels(ps, sheet_part, (REL_COMMENTS, REL_VML))
 
 
 def _rebuild_legacy(ps, sheet_part, troot):
@@ -341,7 +370,10 @@ def _rebuild_legacy(ps, sheet_part, troot):
         c = etree.SubElement(clist, f"{{{X}}}comment")
         c.set("ref", ref)
         c.set("authorId", str(idx))
-        c.set("shapeId", str(idx))
+        # Excel writes shapeId="0" on EVERY note (the cell comes from ref + the VML shape's
+        # Row/Column, not from shapeId). A per-comment 1..N points at a VML shape id that does not
+        # exist (real ids are 1025+), so Excel drops the whole comments part on open. See tests.
+        c.set("shapeId", "0")
         c.set(f"{{{XR}}}uid", rid)
         t = etree.SubElement(etree.SubElement(c, f"{{{X}}}text"), f"{{{X}}}t")
         t.text = _legacy_thread_text(troot, rid)
@@ -354,12 +386,12 @@ def _rebuild_legacy(ps, sheet_part, troot):
     else:
         ps.add_xml_part(comments_part, croot)
         ps.ensure_content_type("/" + comments_part, CT_COMMENTS)
-    ps.set_bytes(vml_part, (_VML_HEAD + "".join(shapes) + _VML_TAIL).encode("utf-8"))
+    ps.set_bytes(vml_part, _vml_document(shapes).encode("utf-8"))
 
     # wiring (idempotent): vml content-type default, the two sheet rels, and <legacyDrawing>
     ps.ensure_default("vml", CT_VML)
-    ps.rels_for(sheet_part).add_rel(REL_COMMENTS, "../" + comments_part[len("xl/"):])
-    vml_rid = ps.rels_for(sheet_part).add_rel(REL_VML, "../" + vml_part[len("xl/"):])
+    _ensure_sheet_rel(ps, sheet_part, REL_COMMENTS, "../" + comments_part[len("xl/"):])
+    vml_rid = _ensure_sheet_rel(ps, sheet_part, REL_VML, "../" + vml_part[len("xl/"):])
     sheet_root = ps.get_xml(sheet_part)
     ld = sheet_root.find(f"{{{X}}}legacyDrawing")
     if ld is None:
@@ -471,6 +503,6 @@ def delete(path, comment_id) -> None:
             comments_part = _sheet_part_rel(ps.get_bytes, sheet_part, REL_COMMENTS) or f"xl/comments{n}.xml"
             vml_part = _sheet_part_rel(ps.get_bytes, sheet_part, REL_VML) or f"xl/drawings/vmlDrawing{n}.vml"
             ps.drop_part(tpart)
-            ps.rels_for(sheet_part).remove_by_target("../threadedComments/" + tpart.rsplit("/", 1)[1])
+            _drop_sheet_rels(ps, sheet_part, (REL_THREADED,))
             _remove_legacy_shadow(ps, sheet_part, comments_part, vml_part)
     patch_parts(path, mut)

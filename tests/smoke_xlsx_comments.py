@@ -131,6 +131,67 @@ def main() -> int:
     if (o := _opens(f)) is not True:
         fails.append(f"final: won't open: {o}")
 
+    # --- multi-comment regression: more than one comment per sheet must keep shapeId="0" on every
+    #     legacy note. A per-comment shapeId (0,1,2..) points at a nonexistent VML shape, so Excel
+    #     drops the whole comments part on open. Also covers comments on a non-first sheet. ---
+    import re
+    f2 = os.path.join(tmp, "multi.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    s2 = wb.create_sheet("Second")
+    for i in range(1, 6):
+        ws[f"B{i}"] = f"v{i}"
+        s2[f"B{i}"] = f"w{i}"
+    wb.save(f2)
+    for i in range(1, 6):
+        mcid = xc.add_comment(f2, {"sheet": "Data", "cell": f"B{i}"}, f"C{i}", author="Alex Morgan")
+        xc.reply(f2, mcid, f"R{i}", author="Sam Lee")
+    xc.add_comment(f2, {"sheet": "Second", "cell": "B1"}, "on the second sheet", author="Alex Morgan")
+
+    if len(xc.list_comments(f2)) != 11:   # 5 roots + 5 replies on Data, 1 on Second
+        fails.append(f"multi: expected 11 comments, got {len(xc.list_comments(f2))}")
+    if (o := _opens(f2)) is not True:
+        fails.append(f"multi: won't open: {o}")
+    with zipfile.ZipFile(f2) as z:
+        cparts = [n for n in z.namelist() if re.match(r"xl/comments\d+\.xml$", n)]
+        if "xl/comments1.xml" not in cparts or "xl/comments2.xml" not in cparts:
+            fails.append(f"multi: expected per-sheet comments1.xml + comments2.xml, got {sorted(cparts)}")
+        for cpart in cparts:
+            body = z.read(cpart).decode()
+            shape_ids = re.findall(r'shapeId="([^"]*)"', body)
+            if any(s != "0" for s in shape_ids):
+                fails.append(f"multi: {cpart} has a non-zero shapeId {shape_ids}; Excel drops the "
+                             f"comments unless every legacy note has shapeId=0")
+            if body.count("<comment ") != body.count("<author>"):
+                fails.append(f"multi: {cpart} comment/author count mismatch")
+
+    # --- foreign relationship spelling: adding a comment must REUSE the sheet's existing
+    #     comments/vml rel, not append a duplicate (duplicate rels make Excel drop all comments) ---
+    f3 = os.path.join(tmp, "foreign.xlsx")
+    _base(f3)
+    xc.add_comment(f3, {"sheet": "Data", "cell": "B2"}, "one", author="Alex Morgan")
+    rp = "xl/worksheets/_rels/sheet1.xml.rels"
+    with zipfile.ZipFile(f3) as z:
+        infos = z.infolist()
+        data = {i.filename: z.read(i.filename) for i in infos}
+    data[rp] = (data[rp].decode()
+                .replace('Target="../comments1.xml"', 'Target="/xl/comments1.xml"')
+                .replace('Target="../drawings/vmlDrawing1.vml"', 'Target="/xl/drawings/vmlDrawing1.vml"')
+                .encode())
+    with zipfile.ZipFile(f3, "w", zipfile.ZIP_DEFLATED) as zo:
+        for i in infos:
+            zo.writestr(i, data[i.filename])
+    xc.add_comment(f3, {"sheet": "Data", "cell": "B3"}, "two", author="Alex Morgan")
+    with zipfile.ZipFile(f3) as z:
+        srels = z.read(rp).decode()
+    for frag, name in (("relationships/comments", "comments"), ("relationships/vmlDrawing", "vmlDrawing")):
+        if srels.count(frag) != 1:
+            fails.append(f"foreign-rels: expected 1 {name} rel, got {srels.count(frag)} "
+                         f"(a duplicate rel makes Excel drop the comments)")
+    if (o := _opens(f3)) is not True:
+        fails.append(f"foreign-rels: won't open: {o}")
+
     if fails:
         print("FAIL:")
         for x in fails:

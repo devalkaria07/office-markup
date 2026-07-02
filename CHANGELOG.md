@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-07-02
+
+### Fixed
+- **Excel: adding more than one comment to a sheet no longer corrupts the file.** Each legacy
+  "note" was written with a per-comment `shapeId` (0, 1, 2, …), but those point at VML drawing
+  shapes that don't exist (real shape ids start at 1025), so Excel discarded the entire comments
+  part on open ("Removed Records: Comments") — leaving at most one thread. Every legacy note now
+  uses `shapeId="0"`, exactly as Excel itself writes. Single-comment files were unaffected (their
+  one shapeId happened to be the valid `0`). Verified in desktop Excel with many comments across
+  multiple sheets; a multi-comment regression test now guards it.
+- **Excel: no duplicate relationships when a file's comment wiring came from another tool.** Adding
+  a comment now reuses the sheet's existing comments/VML relationship whatever its target spelling,
+  instead of appending a second one when the spelling differed from the skill's `../…` (a duplicate
+  relationship also made Excel drop the comments). The delete path unwires by relationship type too,
+  so nothing is left dangling. Guarded by a regression test.
+- **Excel: the VML note drawing stays valid past 1023 comments on a single sheet** — the shape-id
+  block map is now computed from the notes present, not hardcoded.
+
 ## [0.2.0] - 2026-07-01
 
 ### Added
