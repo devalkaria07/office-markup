@@ -4,6 +4,63 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-07-19
+
+### Added
+- **Tracked changes now cover the whole document, not just the body.** `list_revisions` scans
+  headers, footers, footnotes and endnotes too; every record says where it lives (`part`/`story`),
+  and accept/reject — single or `--all` — work in every story. (#8)
+- **Author tracked edits anywhere.** `insert_text` / `delete_text` (and the new commands below)
+  find their anchor phrase across every story; when a phrase appears in more than one place the
+  error reports the per-part counts, and `--part header1`-style pinning narrows the search.
+- **`replace_text`** — "change X to Y" as ONE tracked change (a deletion + insertion pair with
+  consecutive ids and inherited formatting), instead of two separate commands.
+- **`edit_text`** — direct (untracked) replace / insert / delete: the file changes cleanly with
+  nothing else touched, no revision markup, no author.
+- **`apply_edits`** — a whole JSON list of edits, comments, replies and resolves applied in one
+  pass. Sequential (later anchors see earlier results), **all-or-nothing** (any failure leaves
+  the file untouched and names the failing entry), tracked-by-default, with `--dry-run`.
+- **Excel: classic notes and threaded comments now coexist.** Sheets holding old-style notes are
+  no longer refused: the notes (rows AND their drawing shapes) are preserved verbatim through
+  every operation, and only the specific cell that holds a note refuses a new thread — Excel's
+  own one-per-cell rule, said clearly. Sheets with form controls stay refused (their macro-wired
+  drawing layer cannot be regenerated safely).
+- New SKILL.md rules for agents: never rebuild a document to make edits (use the skill even for
+  many changes); when addressing review comments, reply into the SAME thread by id — never fake
+  a conversation; always ASK the user which author name to use; and report genuine bugs or
+  capability gaps back to the user so they can be logged.
+
+### Fixed
+- **Word: text inside hyperlinks is now anchorable** for comments and tracked edits — it was
+  invisible to the phrase search ("anchor text not found" on plainly visible text). Inserted
+  text lands beside the link, as Word itself does. (#5)
+- **Word: runs holding several text pieces (line breaks, tabs mid-run) now anchor correctly** —
+  previously only the first piece was seen, text after a break was unfindable, and deleting text
+  just before a break silently swallowed the break. Splits now cut precisely at text boundaries. (#6)
+- **Word: deleting a classic (pre-2013) comment no longer destroys unrelated modern threads.**
+  The old walk mis-seeded and removed every modern thread while leaving the target; a classic
+  comment is now removed directly, and resolve/reply on one give a clear error instead of a
+  misleading "not found". (#7)
+- **Word: authoring a tracked edit on a file with no settings part now turns Track Changes on**
+  by creating the part (content type + relationship included), as `track_changes --on` already
+  did. (#4)
+- **Excel: invalid cell references like "A0" are rejected upfront** (columns A..XFD, rows
+  1..1,048,576) instead of writing broken geometry into the file; "a01" is canonicalized to "A1". (#3)
+- **Excel: deleting the last threaded comment on a sheet that also holds classic notes no longer
+  destroys the notes** — the teardown now rebuilds a notes-only layer instead of removing it
+  unconditionally.
+- Every save now writes to a temp file and swaps it into place — a crash mid-save can no longer
+  leave a half-written Office file (falls back to in-place write when another program holds the
+  file open for reading).
+
+### Changed
+- Phrase-occurrence counts can differ from v0.2.x when the phrase also appears inside hyperlinks
+  or headers — those occurrences are now genuinely findable (that is the fix); pass
+  `--occurrence`/`--part` when a phrase matches more than once.
+- SKILL.md description and body rewritten around the wider scope (comments + tracked changes +
+  edits + batch) with explicit triggers like "respond to review comments" and "apply review
+  feedback".
+
 ## [0.2.1] - 2026-07-02
 
 ### Fixed

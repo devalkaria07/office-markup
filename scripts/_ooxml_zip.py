@@ -33,6 +33,7 @@ other part is written out with its original bytes, untouched.
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 from pathlib import Path
 from typing import Callable
@@ -41,7 +42,7 @@ from lxml import etree
 
 # Single source of truth for the skill version. SKILL.md `metadata.version` MUST match
 # this; scripts/release.py asserts the two are in sync (see RELEASING.md).
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # OPC packaging namespaces — the "table of contents" and the cross-reference parts that
 # every .docx/.xlsx/.pptx shares, regardless of which Office app produced it.
@@ -73,6 +74,25 @@ def _rels_name(part_name: str) -> str:
     return f"{folder}_rels/{fname}.rels"
 
 
+def abs_target(base_part: str, target: str) -> str:
+    """Resolve a relationship Target against the part that declares it, to an absolute
+    package path without a leading slash. Handles both spellings found in the wild:
+    '/xl/comments1.xml' (absolute — openpyxl writes these) and '../comments1.xml'
+    (relative — what Office itself writes). Malformed extra '..' segments are clamped
+    at the package root rather than escaping it."""
+    if target.startswith("/"):
+        return target[1:]
+    base = base_part.rsplit("/", 1)[0]
+    out = []
+    for p in (base + "/" + target).split("/"):
+        if p == "..":
+            if out:
+                out.pop()
+        elif p not in ("", "."):
+            out.append(p)
+    return "/".join(out)
+
+
 # ---------------------------------------------------------------------------
 # Low-level read / write (the inject_oml_theme pattern, generalized)
 # ---------------------------------------------------------------------------
@@ -86,7 +106,13 @@ def read_parts(path):
 
 
 def write_parts(path, infos, data, added=None) -> None:
-    """Rewrite `path` atomically (build the whole archive in memory, then one write).
+    """Rewrite `path` safely: build the whole archive in memory, write it to a sibling
+    temp file, then swap it into place with os.replace (atomic on the same volume,
+    Windows included) — a crash mid-write can then never leave a half-written Office
+    file. Best-effort on Windows: replacing a file requires delete access, so ANY open
+    handle on the target (even a reader, e.g. a workbook another library hasn't closed)
+    blocks the swap with PermissionError; in that case fall back to the pre-0.3.0
+    in-place write rather than fail an operation that used to succeed.
     Existing parts keep their original ZipInfo — entry order, compression type and the
     rest — so anything we didn't change is byte-identical. Brand-new parts in `added`
     ({name: bytes}) are appended afterwards with default DEFLATE compression."""
@@ -96,7 +122,18 @@ def write_parts(path, infos, data, added=None) -> None:
             zout.writestr(info, data[info.filename])
         for name, payload in (added or {}).items():
             zout.writestr(name, payload)
-    Path(path).write_bytes(buf.getvalue())
+    tmp = Path(str(path) + ".om-tmp")
+    tmp.write_bytes(buf.getvalue())
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        try:
+            Path(path).write_bytes(buf.getvalue())
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

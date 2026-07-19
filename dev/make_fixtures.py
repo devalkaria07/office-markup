@@ -2,7 +2,8 @@
 dev-only, not shipped). Inspect the output with dev/inspect_fixture.py to learn the exact
 parts/attributes/strings each per-format module must reproduce.
 
-    python dev/make_fixtures.py [word|excel|powerpoint|word-revisions|all]   (default: word)
+    python dev/make_fixtures.py [word|excel|powerpoint|word-revisions|word-header-revisions|excel-notes|all]
+    (default: word)
 
 Notes:
 - Uses DispatchEx -> a private, hidden Office instance, so it won't touch anything you
@@ -11,6 +12,9 @@ Notes:
   NOT exposed to COM ("command not available"), so the resolved STATE is validated against
   our own engine output in desktop Word, not captured here. The resolve mechanic is simply
   w15:done -> "1" on the thread root in word/commentsExtended.xml.
+- CLASSIC Word comments (pre-2013, no w14:paraId): modern Word's COM 'Comments.Add' always
+  emits modern five-part comments, so there is NO fixture job for the classic shape — the
+  tests hand-inject it from the documented pre-2013 markup instead.
 """
 import os
 import sys
@@ -139,6 +143,72 @@ def _save(obj, path, fmt):
     return path
 
 
+def word_header_revision_fixtures(outdir=FIXTURES):
+    """Drive real Word to leave TRACKED CHANGES inside a header and a footnote — ground truth
+    for the multi-story support (#8)."""
+    import win32com.client as win32
+    os.makedirs(outdir, exist_ok=True)
+    app = win32.DispatchEx("Word.Application")
+    app.Visible = False
+    try:
+        app.DisplayAlerts = 0
+    except Exception:
+        pass
+    made = []
+    try:
+        # header: text laid down untracked, then edited with tracking on
+        doc = app.Documents.Add()
+        doc.Range(0, 0).InsertAfter("Body text stays put.")
+        hdr = doc.Sections(1).Headers(1).Range          # 1 = wdHeaderFooterPrimary
+        hdr.Text = "Header line"
+        doc.TrackRevisions = True
+        hr = doc.Sections(1).Headers(1).Range
+        hr.Collapse(0)                                  # 0 = wdCollapseEnd
+        hr.InsertAfter(" plus header change")
+        made.append(_save_word(doc, os.path.join(outdir, "rev_header.docx")))
+        doc.Close(False)
+
+        # footnote: added untracked, then edited with tracking on
+        doc = app.Documents.Add()
+        doc.Range(0, 0).InsertAfter("Body sentence with a note.")
+        fn_anchor = doc.Range(doc.Content.End - 2, doc.Content.End - 2)
+        fn = doc.Footnotes.Add(fn_anchor, "", "A footnote.")
+        doc.TrackRevisions = True
+        fr = fn.Range
+        fr.Collapse(0)
+        fr.InsertAfter(" plus note change")
+        made.append(_save_word(doc, os.path.join(outdir, "rev_footnote.docx")))
+        doc.Close(False)
+    finally:
+        app.Quit()
+    return made
+
+
+def excel_notes_fixtures(outdir=FIXTURES):
+    """Drive real Excel to create CLASSIC notes (Range.AddComment) — alone and mixed with a
+    threaded comment on the same sheet. Ground truth for the coexistence work."""
+    import win32com.client as win32
+    os.makedirs(outdir, exist_ok=True)
+    xl = win32.DispatchEx("Excel.Application")
+    xl.Visible = False
+    xl.DisplayAlerts = False
+    made = []
+    try:
+        wb = xl.Workbooks.Add()
+        ws = wb.Worksheets(1)
+        ws.Name = "Data"
+        ws.Range("A2").Value = "North region"
+        ws.Range("B2").Value = "$1.2M"
+        ws.Range("D4").AddComment("Classic note text")          # legacy note
+        made.append(_save(wb, os.path.join(outdir, "excel_note_only.xlsx"), 51))
+        ws.Range("B2").AddCommentThreaded("A threaded comment beside a note.")
+        made.append(_save(wb, os.path.join(outdir, "excel_note_mixed.xlsx"), 51))
+        wb.Close(False)
+    finally:
+        xl.Quit()
+    return made
+
+
 def excel_fixtures(outdir=FIXTURES):
     import win32com.client as win32
     os.makedirs(outdir, exist_ok=True)
@@ -195,7 +265,9 @@ def powerpoint_fixtures(outdir=FIXTURES):
 def main(argv):
     which = (argv[0] if argv else "word").lower()
     jobs = {"word": word_fixtures, "excel": excel_fixtures, "powerpoint": powerpoint_fixtures,
-            "word-revisions": word_revision_fixtures}
+            "word-revisions": word_revision_fixtures,
+            "word-header-revisions": word_header_revision_fixtures,
+            "excel-notes": excel_notes_fixtures}
     if which == "all":
         targets = list(jobs)
     elif which in jobs:

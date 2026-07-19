@@ -19,10 +19,14 @@ from _errors import AnchorNotFound  # noqa: E402
 
 def _anchor(args):
     if args.paragraph is not None:
-        return {"paragraph": args.paragraph}
-    if args.anchor_text:
-        return {"text": args.anchor_text, "occurrence": args.occurrence}
-    raise AnchorNotFound('need --anchor-text "phrase" (optional --occurrence N) or --paragraph N')
+        a = {"paragraph": args.paragraph}
+    elif args.anchor_text:
+        a = {"text": args.anchor_text, "occurrence": args.occurrence}
+    else:
+        raise AnchorNotFound('need --anchor-text "phrase" (optional --occurrence N) or --paragraph N')
+    if getattr(args, "part", None):
+        a["part"] = args.part
+    return a
 
 
 def main(argv=None) -> int:
@@ -33,6 +37,7 @@ def main(argv=None) -> int:
     ap.add_argument("--anchor-text", dest="anchor_text", help="insert right after this phrase")
     ap.add_argument("--occurrence", type=int, help="which match of --anchor-text (1-based)")
     ap.add_argument("--paragraph", type=int, help="insert at the end of the Nth paragraph")
+    ap.add_argument("--part", help="pin the search to one story part (e.g. header1, footnotes)")
     ap.add_argument("--date", help="ISO-8601 timestamp (default: now, UTC)")
     args = ap.parse_args(argv)
 

@@ -44,6 +44,15 @@ def docx_only(path):
     return _docx_revisions
 
 
+def docx_path(path):
+    """Validate a .docx path for the Word-only editing commands (edit_text / apply_edits)."""
+    ext = Path(path).suffix.lower()
+    if ext != ".docx":
+        raise UnsupportedFile(f"this command is Word-only; {ext!r} is not supported")
+    if not Path(path).exists():
+        raise UnsupportedFile(f"file not found: {path}")
+
+
 def run(fn) -> int:
     """Execute fn(); translate expected errors into stable exit codes."""
     try:

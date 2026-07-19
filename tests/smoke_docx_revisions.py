@@ -290,6 +290,121 @@ def build_authored_del(path):
     R.delete_tracked(path, {"text": "cruel "}, author="Reviewer")
 
 
+# ---- v0.3.0 anchor-model fixtures (#5 hyperlinks, #6 multi-w:t runs) -----
+def _hyperlink_para(root):
+    """First paragraph becomes: 'Click ' <hyperlink>'this link'</hyperlink> ' now'.
+    An internal (w:anchor) link needs no relationship part."""
+    p = _first_p(root)
+    link = etree.Element(_w("hyperlink"))
+    link.set(_w("anchor"), "top")
+    link.append(_run("this link"))
+    _set_children(p, _run("Click "), link, _run(" now"))
+
+
+def build_hyperlink_doc(path):
+    _para_doc(path)
+    _inject(path, _hyperlink_para)
+
+
+def _multi_t_para(root):
+    """First paragraph becomes ONE run holding [t'Hello ', br, t'world'] — the valid
+    Word shape that pre-0.3.0 code read as just 'Hello '."""
+    p = _first_p(root)
+    r = etree.Element(_w("r"))
+    t1 = etree.SubElement(r, _w("t"))
+    t1.text = "Hello "
+    t1.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    etree.SubElement(r, _w("br"))
+    t2 = etree.SubElement(r, _w("t"))
+    t2.text = "world"
+    _set_children(p, r)
+
+
+def build_multi_t_doc(path):
+    _para_doc(path)
+    _inject(path, _multi_t_para)
+
+
+def _root_of(path):
+    with zipfile.ZipFile(path) as z:
+        return etree.fromstring(z.read(DOC))
+
+
+def nbr(path):
+    return len(_root_of(path).findall(f".//{_w('br')}"))
+
+
+def anchor_cases(fails):
+    # 1) tracked insert anchored on hyperlink text: must resolve (old: AnchorNotFound)
+    #    and the w:ins must be hoisted BESIDE the hyperlink, not inside it.
+    p = _newpath()
+    build_hyperlink_doc(p)
+    try:
+        R.insert_tracked(p, {"text": "this link"}, " (checked)", author="Reviewer")
+    except Exception as e:  # noqa: BLE001
+        fails.append(f"hyperlink-insert: raised {type(e).__name__}: {e}")
+    else:
+        root = _root_of(p)
+        ins = root.find(f".//{_w('ins')}")
+        if ins is None or ins.getparent().tag != _w("p"):
+            fails.append("hyperlink-insert: w:ins missing or not hoisted out of the hyperlink")
+        R.accept_all(p)
+        if txt(p) != "Click this link (checked) now":
+            fails.append(f"hyperlink-insert/accept: got {txt(p)!r}")
+    p = _newpath()
+    build_hyperlink_doc(p)
+    R.insert_tracked(p, {"text": "this link"}, " (checked)", author="Reviewer")
+    R.reject_all(p)
+    if txt(p) != "Click this link now":
+        fails.append(f"hyperlink-insert/reject: got {txt(p)!r}")
+
+    # 2) tracked delete of text INSIDE the hyperlink (w:del is valid hyperlink content)
+    for action, exp in (("accept", "Click link now"), ("reject", "Click this link now")):
+        p = _newpath()
+        build_hyperlink_doc(p)
+        try:
+            R.delete_tracked(p, {"text": "this "}, author="Reviewer")
+        except Exception as e:  # noqa: BLE001
+            fails.append(f"hyperlink-delete/{action}: raised {type(e).__name__}: {e}")
+            continue
+        (R.accept_all if action == "accept" else R.reject_all)(p)
+        if txt(p) != exp:
+            fails.append(f"hyperlink-delete/{action}: got {txt(p)!r}, expected {exp!r}")
+        link = _root_of(p).find(f".//{_w('hyperlink')}")
+        if link is None:
+            fails.append(f"hyperlink-delete/{action}: hyperlink element vanished")
+
+    # 3) text after an inline break is anchorable (old: AnchorNotFound)
+    for action, exp in (("accept", "Hello "), ("reject", "Hello world")):
+        p = _newpath()
+        build_multi_t_doc(p)
+        try:
+            R.delete_tracked(p, {"text": "world"}, author="Reviewer")
+        except Exception as e:  # noqa: BLE001
+            fails.append(f"multi-t-after-break/{action}: raised {type(e).__name__}: {e}")
+            continue
+        (R.accept_all if action == "accept" else R.reject_all)(p)
+        if txt(p) != exp:
+            fails.append(f"multi-t-after-break/{action}: got {txt(p)!r}, expected {exp!r}")
+        if nbr(p) != 1:
+            fails.append(f"multi-t-after-break/{action}: w:br count {nbr(p)}, expected 1")
+
+    # 4) deleting text just BEFORE the break must not swallow the break (old: it did)
+    p = _newpath()
+    build_multi_t_doc(p)
+    R.delete_tracked(p, {"text": "Hello "}, author="Reviewer")
+    dl = _root_of(p).find(f".//{_w('del')}")
+    if dl is None:
+        fails.append("multi-t-before-break: no w:del written")
+    elif dl.findall(f".//{_w('br')}"):
+        fails.append("multi-t-before-break: the w:br was swallowed into the deletion")
+    R.accept_all(p)
+    if txt(p) != "world":
+        fails.append(f"multi-t-before-break/accept: got {txt(p)!r}, expected 'world'")
+    if nbr(p) != 1:
+        fails.append(f"multi-t-before-break/accept: w:br count {nbr(p)}, expected 1")
+
+
 # ---- scenario runner ----------------------------------------------------
 def check(name, build, probe, exp_accept, exp_reject, fails):
     for action, exp in (("accept", exp_accept), ("reject", exp_reject)):
@@ -328,6 +443,7 @@ def main() -> int:
     check("cell-delete", lambda p: _cell_mark(p, "cellDel"), ncells1, 2, 3, fails)
     check("authored-insert", build_authored_ins, txt, "Hello dear world", "Hello world", fails)
     check("authored-delete", build_authored_del, txt, "Hello world", "Hello cruel world", fails)
+    anchor_cases(fails)                       # v0.3.0: #5 hyperlink + #6 multi-w:t runs
 
     # toggle: on adds <w:trackRevisions/>, off removes it (only settings.xml changes)
     tp = _newpath()

@@ -369,15 +369,19 @@ def _insert(ps, *, text, author, initials, date, parent_id, anchor):
     date_utc = date or iso_z()
 
     # parent thread link (replies)
-    parent_paraid = None
+    parent_paraid, parent_found = None, False
     if parent_id is not None:
         for cm in comments.findall(_w("comment")):
             if cm.get(_w("id")) == str(parent_id):
+                parent_found = True
                 p = cm.find(_w("p"))
                 parent_paraid = p.get(_w14("paraId")) if p is not None else None
                 break
-        if parent_paraid is None:
+        if not parent_found:
             raise CommentNotFound(f"no comment with id {parent_id}")
+        if parent_paraid is None:
+            raise CommentError(f"comment {parent_id} is a classic (non-threaded) comment; "
+                               f"replies require a modern threaded comment")
 
     comments.append(_build_comment_el(cid, paraid, textid, author, initials, date_local, text))
 
@@ -431,41 +435,45 @@ def reply(path, parent_id, text, *, author, initials=None, date=None) -> str:
     return out["id"]
 
 
+def _set_status_in(ps, comment_id, resolved):
+    """PartSet-level core of set_status (batch edits call this directly)."""
+    if not ps.has("word/comments.xml"):
+        raise CommentNotFound(f"no comment with id {comment_id}")
+    comments = ps.get_xml("word/comments.xml")
+    if not any(c.get(_w("id")) == str(comment_id) for c in comments.findall(_w("comment"))):
+        raise CommentNotFound(f"no comment with id {comment_id}")
+    if not ps.has("word/commentsExtended.xml"):
+        raise CommentError(f"comment {comment_id} is a classic (non-threaded) comment; "
+                           f"resolve/reopen needs a modern threaded comment")
+    ex = ps.get_xml("word/commentsExtended.xml")
+    # comment_id -> its paraId -> thread root paraId
+    paraid = None
+    for cm in comments.findall(_w("comment")):
+        if cm.get(_w("id")) == str(comment_id):
+            p = cm.find(_w("p"))
+            paraid = p.get(_w14("paraId")) if p is not None else None
+            break
+    if paraid is None:
+        raise CommentError(f"comment {comment_id} is a classic (non-threaded) comment; "
+                           f"resolve/reopen needs a modern threaded comment")
+    ex_map = _ex_map(ex)
+    root_paraid = _thread_root_paraid(ex_map, paraid)
+    # set done on the whole thread (root + replies), exactly as Word's UI Resolve does
+    members = {pid for pid in ex_map if _thread_root_paraid(ex_map, pid) == root_paraid}
+    members.add(root_paraid)
+    hit = False
+    for ce in ex.findall(_w15("commentEx")):
+        if ce.get(_w15("paraId")) in members:
+            ce.set(_w15("done"), "1" if resolved else "0")
+            hit = True
+    if not hit:
+        raise CommentNotFound(f"no commentEx for id {comment_id}")
+    ps.set_xml("word/commentsExtended.xml", ex)
+
+
 def set_status(path, comment_id, resolved: bool) -> None:
     """Resolve (True) or reopen (False) the whole thread that `comment_id` belongs to."""
-    def mut(ps):
-        if not ps.has("word/comments.xml"):
-            raise CommentNotFound(f"no comment with id {comment_id}")
-        comments = ps.get_xml("word/comments.xml")
-        if not any(c.get(_w("id")) == str(comment_id) for c in comments.findall(_w("comment"))):
-            raise CommentNotFound(f"no comment with id {comment_id}")
-        if not ps.has("word/commentsExtended.xml"):
-            raise CommentError(f"comment {comment_id} is a classic (non-threaded) comment; "
-                               f"resolve/reopen needs a modern threaded comment")
-        ex = ps.get_xml("word/commentsExtended.xml")
-        # comment_id -> its paraId -> thread root paraId
-        paraid = None
-        for cm in comments.findall(_w("comment")):
-            if cm.get(_w("id")) == str(comment_id):
-                p = cm.find(_w("p"))
-                paraid = p.get(_w14("paraId")) if p is not None else None
-                break
-        if paraid is None:
-            raise CommentNotFound(f"no comment with id {comment_id}")
-        ex_map = _ex_map(ex)
-        root_paraid = _thread_root_paraid(ex_map, paraid)
-        # set done on the whole thread (root + replies), exactly as Word's UI Resolve does
-        members = {pid for pid in ex_map if _thread_root_paraid(ex_map, pid) == root_paraid}
-        members.add(root_paraid)
-        hit = False
-        for ce in ex.findall(_w15("commentEx")):
-            if ce.get(_w15("paraId")) in members:
-                ce.set(_w15("done"), "1" if resolved else "0")
-                hit = True
-        if not hit:
-            raise CommentNotFound(f"no commentEx for id {comment_id}")
-        ps.set_xml("word/commentsExtended.xml", ex)
-    patch_parts(path, mut)
+    patch_parts(path, lambda ps: _set_status_in(ps, comment_id, resolved))
 
 
 def delete(path, comment_id) -> None:
@@ -491,16 +499,23 @@ def delete(path, comment_id) -> None:
 
         exm = _ex_map(ex)
         target_para = paraid_of[str(comment_id)]
-        # collect the target plus any descendants (replies) by walking parent links
-        doomed_paraids = {target_para}
+        # Collect the target plus any descendants (replies) by walking parent links.
+        # A CLASSIC comment has no w14:paraId (target_para is None): it cannot have
+        # threaded replies, so the walk starts empty — and the walk itself only ever
+        # follows REAL parent links, because every modern thread root's parent is None
+        # and a None seed would otherwise absorb every thread in the file (#7).
+        doomed_paraids = {target_para} if target_para else set()
         changed = True
         while changed:
             changed = False
             for pid, info in exm.items():
-                if info.get("parent") in doomed_paraids and pid not in doomed_paraids:
+                if info.get("parent") and info["parent"] in doomed_paraids and pid not in doomed_paraids:
                     doomed_paraids.add(pid)
                     changed = True
-        doomed_ids = {id_of_paraid.get(pp) for pp in doomed_paraids if id_of_paraid.get(pp)}
+        # The selected comment is always doomed by its own id — even a classic one that
+        # never appears in the paraId maps.
+        doomed_ids = {str(comment_id)} | {id_of_paraid[pp] for pp in doomed_paraids
+                                          if pp in id_of_paraid}
 
         # durableIds of doomed comments — read from commentsIds BEFORE we delete its rows
         doomed_durables = set()
